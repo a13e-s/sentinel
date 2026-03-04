@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0a0a"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="50%" stop-color="#7b2ff7"/>
+      <stop offset="100%" stop-color="#ff2d95"/>
+    </linearGradient>
+    <linearGradient id="shieldFill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#7b2ff7" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#0099cc"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <clipPath id="shieldClip">
+      <path d="M256 52 L432 138 C432 138 442 308 256 460 C70 308 80 138 80 138 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="64" fill="url(#bg)"/>
+
+  <!-- Ambient glow behind shield -->
+  <ellipse cx="256" cy="280" rx="140" ry="160" fill="#00d4ff" opacity="0.04"/>
+
+  <!-- Circuit nodes (A13E motif) -->
+  <g fill="#00d4ff" opacity="0.25">
+    <circle cx="100" cy="100" r="3"/>
+    <circle cx="88" cy="88" r="1.5"/>
+    <line x1="100" y1="100" x2="88" y2="88" stroke="#00d4ff" stroke-width="0.8"/>
+    <circle cx="412" cy="100" r="3"/>
+    <circle cx="424" cy="112" r="1.5"/>
+    <line x1="412" y1="100" x2="424" y2="112" stroke="#00d4ff" stroke-width="0.8"/>
+    <circle cx="100" cy="412" r="2.5"/>
+    <circle cx="85" cy="400" r="1.5"/>
+    <line x1="100" y1="412" x2="85" y2="400" stroke="#00d4ff" stroke-width="0.8"/>
+    <circle cx="412" cy="412" r="2.5"/>
+    <circle cx="430" cy="405" r="1.5"/>
+    <line x1="412" y1="412" x2="430" y2="405" stroke="#00d4ff" stroke-width="0.8"/>
+  </g>
+
+  <!-- Shield body -->
+  <path d="M256 52 L432 138 C432 138 442 308 256 460 C70 308 80 138 80 138 Z"
+        fill="url(#shieldFill)"/>
+  <path d="M256 52 L432 138 C432 138 442 308 256 460 C70 308 80 138 80 138 Z"
+        fill="none" stroke="url(#accent)" stroke-width="2.5" opacity="0.5"/>
+
+  <!-- Inner shield -->
+  <path d="M256 82 L404 154 C404 154 412 296 256 428 C100 296 108 154 108 154 Z"
+        fill="none" stroke="url(#accent)" stroke-width="1" opacity="0.15"/>
+
+  <!-- Scan lines inside shield -->
+  <g clip-path="url(#shieldClip)" opacity="0.06" stroke="#00d4ff" stroke-width="1">
+    <line x1="60" y1="200" x2="452" y2="200"/>
+    <line x1="60" y1="240" x2="452" y2="240"/>
+    <line x1="60" y1="280" x2="452" y2="280"/>
+    <line x1="60" y1="320" x2="452" y2="320"/>
+    <line x1="60" y1="360" x2="452" y2="360"/>
+  </g>
+
+  <!-- Central eye (sentinel / watcher) -->
+  <g filter="url(#glow)">
+    <!-- Outer eye shape -->
+    <path d="M152 256 Q256 175 360 256 Q256 337 152 256 Z"
+          fill="none" stroke="url(#cyan)" stroke-width="3"/>
+
+    <!-- Iris ring -->
+    <circle cx="256" cy="256" r="40" fill="none" stroke="url(#cyan)" stroke-width="2.5"/>
+
+    <!-- Pupil -->
+    <circle cx="256" cy="256" r="16" fill="url(#cyan)"/>
+
+    <!-- Highlight -->
+    <circle cx="249" cy="249" r="4.5" fill="#ffffff" opacity="0.7"/>
+  </g>
+
+  <!-- Crosshair marks -->
+  <g stroke="#00d4ff" stroke-width="1.2" opacity="0.3" stroke-linecap="round">
+    <line x1="256" y1="195" x2="256" y2="215"/>
+    <line x1="256" y1="297" x2="256" y2="317"/>
+    <line x1="195" y1="256" x2="215" y2="256"/>
+    <line x1="297" y1="256" x2="317" y2="256"/>
+  </g>
+
+  <!-- Lock icon below eye (A13E signature) -->
+  <g transform="translate(238, 330)" filter="url(#glow)" opacity="0.7">
+    <rect x="4" y="12" width="28" height="22" rx="3" fill="none" stroke="#00d4ff" stroke-width="1.8"/>
+    <path d="M10 12 L10 7 C10 0 26 0 26 7 L26 12" fill="none" stroke="#00d4ff" stroke-width="1.8"/>
+    <circle cx="18" cy="24" r="3" fill="#00d4ff"/>
+  </g>
+
+  <!-- Top accent flares -->
+  <circle cx="256" cy="52" r="4" fill="#00d4ff" opacity="0.5" filter="url(#softGlow)"/>
+
+  <!-- Text: SENTINEL -->
+  <text x="256" y="490" text-anchor="middle"
+        font-family="'SF Mono', 'Fira Code', 'Cascadia Code', monospace"
+        font-size="24" font-weight="700" fill="white" letter-spacing="10" opacity="0.8">SENTINEL</text>
+</svg>
