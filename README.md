@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="Sentinel" width="200"/>
+</p>
+
 # Sentinel
 
 Provider-agnostic AI penetration testing framework. Automates vulnerability assessment by combining reconnaissance tools with AI-powered code analysis across any LLM provider.
