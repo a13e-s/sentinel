@@ -1,0 +1,440 @@
+#!/bin/bash
+# Sentinel CLI - Provider-Agnostic AI Penetration Testing Framework
+
+set -e
+
+# Prevent MSYS from converting Unix paths (e.g. /repos/my-repo) to Windows paths
+case "$OSTYPE" in
+  msys*) export MSYS_NO_PATHCONV=1 ;;
+esac
+
+# Detect Podman vs Docker and set compose files accordingly
+# Podman doesn't support host-gateway, so we only include the Docker override for actual Docker
+COMPOSE_BASE="docker-compose.yml"
+if command -v podman &>/dev/null; then
+  # Podman detected (either native or via Docker Desktop shim) - use base config only
+  COMPOSE_OVERRIDE=""
+else
+  # Docker detected - include extra_hosts override for Linux localhost access
+  COMPOSE_OVERRIDE="-f docker-compose.docker.yml"
+fi
+COMPOSE_FILE="$COMPOSE_BASE"
+
+# Load .env if present
+if [ -f .env ]; then
+  set -a
+  source .env
+  set +a
+fi
+
+show_help() {
+  cat << 'EOF'
+
+  ███████╗███████╗███╗   ██╗████████╗██╗███╗   ██╗███████╗██╗
+  ██╔════╝██╔════╝████╗  ██║╚══██╔══╝██║████╗  ██║██╔════╝██║
+  ███████╗█████╗  ██╔██╗ ██║   ██║   ██║██╔██╗ ██║█████╗  ██║
+  ╚════██║██╔══╝  ██║╚██╗██║   ██║   ██║██║╚██╗██║██╔══╝  ██║
+  ███████║███████╗██║ ╚████║   ██║   ██║██║ ╚████║███████╗███████╗
+  ╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝╚═╝  ╚═══╝╚══════╝╚══════╝
+
+       Provider-Agnostic AI Penetration Testing Framework
+
+Usage:
+  ./sentinel start URL=<url> REPO=<name>   Start a pentest workflow
+  ./sentinel workspaces                    List all workspaces
+  ./sentinel logs ID=<workflow-id>         Tail logs for a specific workflow
+  ./sentinel smoke                         Run infrastructure smoke test
+  ./sentinel stop                          Stop all containers
+  ./sentinel help                          Show this help message
+
+Options for 'start':
+  REPO=<name>            Folder name under ./repos/ (e.g. REPO=repo-name)
+  CONFIG=<path>          Configuration file (YAML)
+  OUTPUT=<path>          Output directory for reports (default: ./audit-logs/)
+  WORKSPACE=<name>       Named workspace (auto-resumes if exists, creates if new)
+  MODEL=<provider/model> Override model (e.g. MODEL=openai/gpt-4o, MODEL=ollama/llama3.3)
+  PIPELINE_TESTING=true  Use minimal prompts for fast testing
+
+Options for 'stop':
+  CLEAN=true             Remove all data including volumes
+
+Examples:
+  ./sentinel start URL=https://example.com REPO=repo-name
+  ./sentinel start URL=https://example.com REPO=repo-name WORKSPACE=q1-audit
+  ./sentinel start URL=https://example.com REPO=repo-name CONFIG=./config.yaml
+  ./sentinel start URL=https://example.com REPO=repo-name MODEL=openai/gpt-4o
+  ./sentinel start URL=https://example.com REPO=repo-name OUTPUT=./my-reports
+  ./sentinel workspaces
+  ./sentinel logs ID=example.com_sentinel-1234567890
+  ./sentinel stop CLEAN=true
+
+Monitor workflows at http://localhost:8233
+EOF
+}
+
+# Parse KEY=value arguments into variables
+parse_args() {
+  for arg in "$@"; do
+    case "$arg" in
+      URL=*) URL="${arg#URL=}" ;;
+      REPO=*) REPO="${arg#REPO=}" ;;
+      CONFIG=*) CONFIG="${arg#CONFIG=}" ;;
+      OUTPUT=*) OUTPUT="${arg#OUTPUT=}" ;;
+      ID=*) ID="${arg#ID=}" ;;
+      CLEAN=*) CLEAN="${arg#CLEAN=}" ;;
+      PIPELINE_TESTING=*) PIPELINE_TESTING="${arg#PIPELINE_TESTING=}" ;;
+      REBUILD=*) REBUILD="${arg#REBUILD=}" ;;
+      MODEL=*) MODEL="${arg#MODEL=}" ;;
+      WORKSPACE=*) WORKSPACE="${arg#WORKSPACE=}" ;;
+    esac
+  done
+}
+
+# Check if Temporal is running and healthy
+is_temporal_ready() {
+  docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T temporal \
+    temporal operator cluster health --address localhost:7233 2>/dev/null | grep -q "SERVING"
+}
+
+# Ensure containers are running with correct mounts
+ensure_containers() {
+  # If custom OUTPUT_DIR is set, always refresh worker to ensure correct volume mount
+  # Docker compose will only recreate if the mount actually changed
+  if [ -n "$OUTPUT_DIR" ]; then
+    echo "Ensuring worker has correct output mount..."
+    docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE up -d worker 2>/dev/null || true
+  fi
+
+  # Quick check: if Temporal is already healthy, we're good
+  if is_temporal_ready; then
+    return 0
+  fi
+
+  # Need to start containers
+  echo "Starting Sentinel containers..."
+  if [ "$REBUILD" = "true" ]; then
+    # Force rebuild without cache (use when code changes aren't being picked up)
+    echo "Rebuilding with --no-cache..."
+    docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE build --no-cache worker
+  fi
+  docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE up -d --build
+
+  # Wait for Temporal to be ready
+  echo "Waiting for Temporal to be ready..."
+  for i in $(seq 1 30); do
+    if is_temporal_ready; then
+      echo "Temporal is ready!"
+      return 0
+    fi
+    if [ "$i" -eq 30 ]; then
+      echo "Timeout waiting for Temporal"
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
+cmd_start() {
+  parse_args "$@"
+
+  # Validate required vars
+  if [ -z "$URL" ] || [ -z "$REPO" ]; then
+    echo "ERROR: URL and REPO are required"
+    echo "Usage: ./sentinel start URL=<url> REPO=<name>"
+    exit 1
+  fi
+
+  # Check for at least one provider API key or Ollama config
+  if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$GOOGLE_API_KEY" ] && [ -z "$OLLAMA_BASE_URL" ]; then
+    echo "ERROR: No AI provider configured"
+    echo "       Set at least one in .env:"
+    echo "         ANTHROPIC_API_KEY"
+    echo "         OPENAI_API_KEY"
+    echo "         GOOGLE_API_KEY"
+    echo "         OLLAMA_BASE_URL (for local Ollama)"
+    echo ""
+    echo "       Or specify a model: MODEL=ollama/llama3.3"
+    exit 1
+  fi
+
+  # Determine container path for REPO
+  # - If REPO is already a container path (/benchmarks/*, /repos/*), use as-is
+  # - Otherwise, treat as a folder name under ./repos/ (mounted at /repos in container)
+  case "$REPO" in
+    /benchmarks/*|/repos/*)
+      CONTAINER_REPO="$REPO"
+      ;;
+    *)
+      if [ ! -d "./repos/$REPO" ]; then
+        echo "ERROR: Repository not found at ./repos/$REPO"
+        echo ""
+        echo "Place your target repository under the ./repos/ directory"
+        exit 1
+      fi
+      CONTAINER_REPO="/repos/$REPO"
+      ;;
+  esac
+
+  # Handle custom OUTPUT directory
+  # Export OUTPUT_DIR for docker-compose volume mount BEFORE starting containers
+  if [ -n "$OUTPUT" ]; then
+    # Create output directory with write permissions for container user (UID 1001)
+    mkdir -p "$OUTPUT"
+    chmod 777 "$OUTPUT"
+    export OUTPUT_DIR="$OUTPUT"
+  fi
+
+  # Pass MODEL override as environment variable for the container
+  if [ -n "$MODEL" ]; then
+    export SENTINEL_MODEL="$MODEL"
+  fi
+
+  # Ensure audit-logs directory exists with write permissions for container user (UID 1001)
+  mkdir -p ./audit-logs
+  chmod 777 ./audit-logs
+
+  # Ensure repo deliverables directory is writable by container user (UID 1001)
+  if [ -d "./repos/$REPO" ]; then
+    mkdir -p "./repos/$REPO/deliverables"
+    chmod 777 "./repos/$REPO/deliverables"
+  fi
+
+  # Ensure containers are running (starts them if needed)
+  ensure_containers
+
+  # Build optional args
+  ARGS=""
+  [ -n "$CONFIG" ] && ARGS="$ARGS --config $CONFIG"
+
+  # Pass container path for output (where OUTPUT_DIR is mounted)
+  # Also pass display path so client can show the host path to user
+  if [ -n "$OUTPUT" ]; then
+    ARGS="$ARGS --output /app/output --display-output $OUTPUT"
+  fi
+
+  [ "$PIPELINE_TESTING" = "true" ] && ARGS="$ARGS --pipeline-testing"
+  [ -n "$WORKSPACE" ] && ARGS="$ARGS --workspace $WORKSPACE"
+
+  # Run the client to submit workflow
+  docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T worker \
+    node dist/temporal/client.js "$URL" "$CONTAINER_REPO" $ARGS
+}
+
+cmd_logs() {
+  parse_args "$@"
+
+  if [ -z "$ID" ]; then
+    echo "ERROR: ID is required"
+    echo "Usage: ./sentinel logs ID=<workflow-id>"
+    exit 1
+  fi
+
+  # Auto-discover the workflow log file
+  # 1. Check default location first
+  # 2. Search common output directories
+  # 3. Fall back to find command
+  WORKFLOW_LOG=""
+
+  if [ -f "./audit-logs/${ID}/workflow.log" ]; then
+    WORKFLOW_LOG="./audit-logs/${ID}/workflow.log"
+  else
+    # For resume workflow IDs (e.g. workspace_resume_123), check the original workspace
+    WORKSPACE_ID="${ID%%_resume_*}"
+    if [ "$WORKSPACE_ID" != "$ID" ] && [ -f "./audit-logs/${WORKSPACE_ID}/workflow.log" ]; then
+      WORKFLOW_LOG="./audit-logs/${WORKSPACE_ID}/workflow.log"
+    fi
+
+    # For named workspace IDs (e.g. workspace_sentinel-123), check the workspace name
+    if [ -z "$WORKFLOW_LOG" ]; then
+      WORKSPACE_ID="${ID%%_sentinel-*}"
+      if [ "$WORKSPACE_ID" != "$ID" ] && [ -f "./audit-logs/${WORKSPACE_ID}/workflow.log" ]; then
+        WORKFLOW_LOG="./audit-logs/${WORKSPACE_ID}/workflow.log"
+      fi
+    fi
+
+    if [ -z "$WORKFLOW_LOG" ]; then
+      # Search for the workflow directory (handles custom OUTPUT paths)
+      FOUND=$(find . -maxdepth 3 -path "*/${ID}/workflow.log" -type f 2>/dev/null | head -1)
+      if [ -n "$FOUND" ]; then
+        WORKFLOW_LOG="$FOUND"
+      fi
+    fi
+  fi
+
+  if [ -n "$WORKFLOW_LOG" ]; then
+    echo "Tailing workflow log: $WORKFLOW_LOG"
+    tail -f "$WORKFLOW_LOG"
+  else
+    echo "ERROR: Workflow log not found for ID: $ID"
+    echo ""
+    echo "Possible causes:"
+    echo "  - Workflow hasn't started yet"
+    echo "  - Workflow ID is incorrect"
+    echo ""
+    echo "Check the Temporal Web UI at http://localhost:8233 for workflow details"
+    exit 1
+  fi
+}
+
+cmd_workspaces() {
+  # Ensure containers are running (need worker to execute node)
+  ensure_containers
+
+  docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T worker \
+    node dist/temporal/workspaces.js
+}
+
+cmd_smoke() {
+  echo ""
+  echo "Sentinel Infrastructure Smoke Test"
+  echo "==================================="
+  echo ""
+
+  SMOKE_PASSED=0
+  SMOKE_FAILED=0
+
+  smoke_pass() {
+    echo "  [PASS] $1"
+    SMOKE_PASSED=$((SMOKE_PASSED + 1))
+  }
+
+  smoke_fail() {
+    echo "  [FAIL] $1"
+    [ -n "$2" ] && echo "         $2"
+    SMOKE_FAILED=$((SMOKE_FAILED + 1))
+  }
+
+  # 1. Build Docker images
+  echo "Building Docker images..."
+  if docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE build 2>&1 | tail -5; then
+    smoke_pass "Docker build"
+  else
+    smoke_fail "Docker build" "docker compose build failed"
+  fi
+  echo ""
+
+  # 2. Start Temporal and wait for health
+  echo "Starting Temporal..."
+  docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE up -d temporal 2>/dev/null
+
+  TEMPORAL_OK=false
+  for i in $(seq 1 30); do
+    if is_temporal_ready; then
+      TEMPORAL_OK=true
+      break
+    fi
+    sleep 2
+  done
+
+  if [ "$TEMPORAL_OK" = "true" ]; then
+    smoke_pass "Temporal health check"
+  else
+    smoke_fail "Temporal health check" "Timed out waiting for Temporal to become healthy"
+  fi
+
+  # 3. Start worker and verify it connects
+  echo "Starting worker..."
+  docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE up -d worker 2>/dev/null
+  sleep 3
+
+  if docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE ps worker 2>/dev/null | grep -q "running"; then
+    smoke_pass "Worker container running"
+  else
+    smoke_fail "Worker container running" "Worker is not in running state"
+  fi
+
+  # 4. Verify TypeScript compilation inside container
+  echo "Checking TypeScript build artifacts..."
+  if docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T worker \
+    test -f dist/temporal/worker.js 2>/dev/null; then
+    smoke_pass "TypeScript build (dist/temporal/worker.js exists)"
+  else
+    smoke_fail "TypeScript build" "dist/temporal/worker.js not found in container"
+  fi
+
+  # 5. Verify Temporal client entry point
+  if docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T worker \
+    test -f dist/temporal/client.js 2>/dev/null; then
+    smoke_pass "Temporal client (dist/temporal/client.js exists)"
+  else
+    smoke_fail "Temporal client" "dist/temporal/client.js not found in container"
+  fi
+
+  # 6. Verify MCP server binary
+  if docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T worker \
+    test -f mcp-server/dist/index.js 2>/dev/null; then
+    smoke_pass "MCP server (mcp-server/dist/index.js exists)"
+  else
+    smoke_fail "MCP server" "mcp-server/dist/index.js not found in container"
+  fi
+
+  # 7. Verify smoke test entry point
+  if docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T worker \
+    test -f dist/smoke-test.js 2>/dev/null; then
+    smoke_pass "Smoke test module (dist/smoke-test.js exists)"
+  else
+    smoke_fail "Smoke test module" "dist/smoke-test.js not found in container"
+  fi
+
+  # 8. Verify worker can import key modules
+  echo "Verifying module imports..."
+  if docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE exec -T worker \
+    node -e "require('./dist/session-manager.js'); console.log('ok')" 2>/dev/null | grep -q "ok"; then
+    smoke_pass "Module import (session-manager)"
+  else
+    smoke_fail "Module import (session-manager)" "Failed to import session-manager"
+  fi
+
+  echo ""
+
+  # Summary
+  SMOKE_TOTAL=$((SMOKE_PASSED + SMOKE_FAILED))
+  echo "---"
+  echo "Results: $SMOKE_PASSED passed, $SMOKE_FAILED failed out of $SMOKE_TOTAL checks"
+  echo ""
+
+  # Clean up
+  echo "Cleaning up containers..."
+  docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE down 2>/dev/null
+
+  if [ "$SMOKE_FAILED" -gt 0 ]; then
+    exit 1
+  fi
+}
+
+cmd_stop() {
+  parse_args "$@"
+
+  if [ "$CLEAN" = "true" ]; then
+    docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE down -v
+  else
+    docker compose -f "$COMPOSE_FILE" $COMPOSE_OVERRIDE down
+  fi
+}
+
+# Main command dispatch
+case "${1:-help}" in
+  start)
+    shift
+    cmd_start "$@"
+    ;;
+  logs)
+    shift
+    cmd_logs "$@"
+    ;;
+  workspaces)
+    shift
+    cmd_workspaces
+    ;;
+  smoke)
+    shift
+    cmd_smoke
+    ;;
+  stop)
+    shift
+    cmd_stop "$@"
+    ;;
+  help|--help|-h|*)
+    show_help
+    ;;
+esac
