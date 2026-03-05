@@ -20,16 +20,24 @@ const PRICING: Record<string, TokenPricing> = {
   'gpt-4o': [2.5, 10],
   'gpt-4o-mini': [0.15, 0.6],
   'gpt-4-turbo': [10, 30],
+  'gpt-4.1': [2, 8],
+  'gpt-4.1-mini': [0.4, 1.6],
+  'gpt-4.1-nano': [0.1, 0.4],
   'o1': [15, 60],
   'o1-mini': [3, 12],
+  'o3': [10, 40],
   'o3-mini': [1.1, 4.4],
+  'o4-mini': [1.1, 4.4],
 
   // Anthropic
+  'claude-sonnet-4-20250514': [3, 15],
   'claude-sonnet-4-5-20250929': [3, 15],
   'claude-haiku-3-5-20241022': [0.8, 4],
   'claude-opus-4-20250514': [15, 75],
 
   // Google Gemini
+  'gemini-2.5-pro': [1.25, 10],
+  'gemini-2.5-flash': [0.15, 0.6],
   'gemini-2.0-flash': [0.1, 0.4],
   'gemini-2.0-flash-lite': [0.075, 0.3],
   'gemini-1.5-pro': [1.25, 5],
