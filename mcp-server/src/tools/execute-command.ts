@@ -1,18 +1,21 @@
 /**
  * execute_command MCP Tool
  *
- * Executes shell commands in the target repository directory.
- * Used by agents for reconnaissance (nmap, curl, etc.) and code analysis.
- *
- * NOTE: Uses execFileSync with /bin/sh -c to provide shell features (pipes, redirects)
- * through the safer execFile API. Commands run inside a sandboxed Docker container
- * with limited access — the command input comes from the AI agent, not end users.
+ * Executes approved shell-safe commands in the target repository directory.
+ * Used by agents for reconnaissance and read-only inspection without exposing
+ * a general-purpose shell.
  */
 
 import { z } from 'zod';
 import { execFileSync } from 'node:child_process';
 import { createToolResult, type ToolResult } from '../types/tool-responses.js';
 import { createValidationError, createGenericError } from '../utils/error-formatter.js';
+import {
+  buildChildProcessEnv,
+  CommandValidationError,
+  parseCommand,
+  validateCommand,
+} from '../utils/command-security.js';
 
 export const ExecuteCommandInputSchema = z.object({
   command: z.string().describe('Shell command to execute'),
@@ -22,7 +25,7 @@ export const ExecuteCommandInputSchema = z.object({
 export type ExecuteCommandInput = z.infer<typeof ExecuteCommandInputSchema>;
 
 export const EXECUTE_COMMAND_DESCRIPTION =
-  'Execute a shell command in the target repository directory. Use for running reconnaissance tools (curl, nmap, etc.), inspecting files, or any command-line operations needed for security analysis. Commands run with a timeout to prevent hangs.';
+  'Execute an approved command in the target repository directory. Supported commands include curl, nmap, subfinder, whatweb, httpx, pwd, ls, find, cat, head, tail, wc, stat, git status/diff --stat/rev-parse/log --oneline, and jq. Pipes, redirects, and shell expansion are not supported.';
 
 /** Maximum allowed timeout in seconds. */
 const MAX_TIMEOUT_SECONDS = 120;
@@ -30,10 +33,18 @@ const MAX_TIMEOUT_SECONDS = 120;
 /** Default timeout in seconds. */
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
+export interface ExecuteCommandOptions {
+  readonly targetWebUrl?: string;
+  readonly unsafeShellMode?: boolean;
+}
+
 /**
  * Create execute_command handler scoped to targetDir.
  */
-export function createExecuteCommandHandler(targetDir: string) {
+export function createExecuteCommandHandler(
+  targetDir: string,
+  options?: ExecuteCommandOptions,
+) {
   return async function executeCommand(args: ExecuteCommandInput): Promise<ToolResult> {
     try {
       const timeoutSeconds = Math.min(
@@ -45,19 +56,33 @@ export function createExecuteCommandHandler(targetDir: string) {
       let stdout: string;
       let stderr: string;
       let exitCode = 0;
+      const unsafeShellMode = options?.unsafeShellMode ?? process.env['SENTINEL_UNSAFE_SHELL_MODE'] === 'true';
 
       try {
-        // execFileSync with /bin/sh -c provides shell features (pipes, redirects)
-        // through the safer execFile API. The command comes from the AI agent
-        // running inside a sandboxed Docker container, not from end users.
-        const output = execFileSync('/bin/sh', ['-c', args.command], {
-          cwd: targetDir,
-          timeout: timeoutMs,
-          maxBuffer: 1024 * 1024, // 1 MB
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-          env: { ...process.env, HOME: process.env['HOME'] ?? '/home/sentinel' },
-        });
+        const output = unsafeShellMode
+          ? execFileSync('/bin/sh', ['-c', args.command], {
+              cwd: targetDir,
+              timeout: timeoutMs,
+              maxBuffer: 1024 * 1024,
+              encoding: 'utf-8',
+              stdio: ['pipe', 'pipe', 'pipe'],
+              env: { ...process.env, HOME: process.env['HOME'] ?? '/home/sentinel' },
+            })
+          : (() => {
+              const parsed = parseCommand(args.command);
+              validateCommand(
+                parsed,
+                options?.targetWebUrl != null ? { targetWebUrl: options.targetWebUrl } : undefined,
+              );
+              return execFileSync(parsed.executable, [...parsed.args], {
+                cwd: targetDir,
+                timeout: timeoutMs,
+                maxBuffer: 1024 * 1024,
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: buildChildProcessEnv(),
+              });
+            })();
         stdout = typeof output === 'string' ? output : '';
         stderr = '';
       } catch (error: unknown) {
@@ -73,6 +98,14 @@ export function createExecuteCommandHandler(targetDir: string) {
           return createToolResult(createValidationError(
             `Command timed out after ${timeoutSeconds} seconds`,
             true,
+            { command: args.command },
+          ));
+        }
+
+        if (error instanceof CommandValidationError) {
+          return createToolResult(createValidationError(
+            error.message,
+            false,
             { command: args.command },
           ));
         }
