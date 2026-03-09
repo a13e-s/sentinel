@@ -3,6 +3,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/scripts/permissions.sh"
+
 # Prevent MSYS from converting Unix paths (e.g. /repos/my-repo) to Windows paths
 case "$OSTYPE" in
   msys*) export MSYS_NO_PATHCONV=1 ;;
@@ -178,9 +181,7 @@ cmd_start() {
   # Handle custom OUTPUT directory
   # Export OUTPUT_DIR for docker-compose volume mount BEFORE starting containers
   if [ -n "$OUTPUT" ]; then
-    # Create output directory with write permissions for container user (UID 1001)
-    mkdir -p "$OUTPUT"
-    chmod 777 "$OUTPUT"
+    ensure_shared_dir "$OUTPUT"
     export OUTPUT_DIR="$OUTPUT"
   fi
 
@@ -189,14 +190,11 @@ cmd_start() {
     export SENTINEL_MODEL="$MODEL"
   fi
 
-  # Ensure audit-logs directory exists with write permissions for container user (UID 1001)
-  mkdir -p ./audit-logs
-  chmod 777 ./audit-logs
+  ensure_shared_dir ./audit-logs
 
-  # Ensure repo deliverables directory is writable by container user (UID 1001)
+  # Ensure repo deliverables directory exists for the worker output path.
   if [ -d "./repos/$REPO" ]; then
-    mkdir -p "./repos/$REPO/deliverables"
-    chmod 777 "./repos/$REPO/deliverables"
+    ensure_shared_dir "./repos/$REPO/deliverables"
   fi
 
   # Ensure containers are running (starts them if needed)
