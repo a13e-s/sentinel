@@ -16,6 +16,10 @@ import {
 } from '@langchain/core/messages';
 import { calculateCost, type CostResult } from './cost-tracker.js';
 import type { ProviderName } from '../types/providers.js';
+import {
+  protectToolOutput,
+  type ToolOutputSanitizationMode,
+} from '../security/tool-output-policy.js';
 
 export interface AgentLoopConfig {
   maxTurns: number;
@@ -25,6 +29,7 @@ export interface AgentLoopConfig {
   heartbeat?: () => void;
   heartbeatIntervalMs?: number;
   onTurnComplete?: (turn: number, cost: CostResult) => void;
+  toolOutputSanitizationMode?: ToolOutputSanitizationMode;
 }
 
 export interface AgentLoopResult {
@@ -197,9 +202,21 @@ export async function runAgentLoop(
         }
       }
 
+      const protectedToolOutput = protectToolOutput(
+        toolResult,
+        config.toolOutputSanitizationMode,
+      );
+
+      if (protectedToolOutput.detection.wasModified || protectedToolOutput.wasEnforced) {
+        console.warn(
+          `[agent-loop] Tool "${toolCall.name}" output flagged in ${protectedToolOutput.mode} mode` +
+          ` enforced=${protectedToolOutput.wasEnforced}`,
+        );
+      }
+
       messages.push(
         new ToolMessage({
-          content: toolResult,
+          content: protectedToolOutput.content,
           tool_call_id: toolCall.id ?? toolCall.name,
         }),
       );
