@@ -176,7 +176,7 @@ describe('AgentExecutionService', () => {
     expect(mockCreateGitCheckpoint).toHaveBeenCalled();
     expect(auditSession.startAgent).toHaveBeenCalledWith('pre-recon', expect.any(String), 1);
     expect(mockCreateModel).toHaveBeenCalled();
-    expect(mockCreateMcpTools).toHaveBeenCalledWith('/tmp/test-repo');
+    expect(mockCreateMcpTools).toHaveBeenCalledWith('/tmp/test-repo', undefined);
     expect(mockRunAgentLoop).toHaveBeenCalled();
     expect(mockPathExists).toHaveBeenCalled(); // Deliverable check
     expect(mockCommitGitSuccess).toHaveBeenCalled();
@@ -304,6 +304,57 @@ describe('AgentExecutionService', () => {
 
     expect(result.ok).toBe(true);
     expect(mockLoadOptional).toHaveBeenCalledWith(undefined);
+  });
+
+  it('redacts auth secrets before saving prompt snapshots while preserving the runtime prompt', async () => {
+    mockLoadOptional.mockResolvedValue({
+      ok: true,
+      value: {
+        avoid: [],
+        focus: [],
+        authentication: {
+          login_type: 'form',
+          login_url: 'https://example.com/login',
+          credentials: {
+            username: 'alice@example.com',
+            password: 'Sup3rSecret!',
+            totp_secret: 'JBSWY3DPEHPK3PXP',
+          },
+          login_flow: ['Type $username', 'Type $password', 'Enter $totp'],
+          success_condition: { type: 'url', value: '/dashboard' },
+        },
+      },
+    });
+
+    mockLoadPrompt.mockResolvedValue([
+      'Use username alice@example.com',
+      'Password: Sup3rSecret!',
+      'generated TOTP code using secret "JBSWY3DPEHPK3PXP"',
+    ].join('\n'));
+
+    const result = await service.execute('pre-recon', defaultInput, auditSession as never, logger);
+
+    expect(result.ok).toBe(true);
+    expect(auditSession.startAgent).toHaveBeenCalledWith(
+      'pre-recon',
+      expect.stringContaining('[REDACTED_USERNAME]'),
+      1,
+    );
+
+    const savedPrompt = auditSession.startAgent.mock.calls[0]![1] as string;
+    expect(savedPrompt).not.toContain('alice@example.com');
+    expect(savedPrompt).not.toContain('Sup3rSecret!');
+    expect(savedPrompt).not.toContain('JBSWY3DPEHPK3PXP');
+
+    expect(mockRunAgentLoop).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('Sup3rSecret!'),
+      expect.any(Array),
+      expect.any(Object),
+    );
+    expect(mockCreateMcpTools).toHaveBeenCalledWith('/tmp/test-repo', {
+      totpSecret: 'JBSWY3DPEHPK3PXP',
+    });
   });
 
   it('should resolve model config using raw config', async () => {

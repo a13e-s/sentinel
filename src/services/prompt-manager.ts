@@ -116,16 +116,14 @@ async function buildLoginInstructions(authentication: Authentication, logger: Ac
         userInstructions = userInstructions.replace(/\$password/g, authentication.credentials.password);
       }
       if (authentication.credentials.totp_secret) {
-        userInstructions = userInstructions.replace(/\$totp/g, `generated TOTP code using secret "${authentication.credentials.totp_secret}"`);
+        userInstructions = userInstructions.replace(
+          /\$totp/g,
+          'generated TOTP code using the generate_totp MCP tool',
+        );
       }
     }
 
     loginInstructions = loginInstructions.replace(/{{user_instructions}}/g, userInstructions);
-
-    // 5. Replace TOTP secret placeholder if present in template
-    if (authentication.credentials?.totp_secret) {
-      loginInstructions = loginInstructions.replace(/{{totp_secret}}/g, authentication.credentials.totp_secret);
-    }
 
     return loginInstructions;
   } catch (error) {

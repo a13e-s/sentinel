@@ -1,9 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { generateTotp } from '../../../mcp-server/src/tools/generate-totp.js';
 
 describe('generate_totp tool', () => {
   // Well-known base32 test secret (RFC 6238 test vector base32 encoding)
   const TEST_SECRET = 'JBSWY3DPEHPK3PXP';
+
+  afterEach(() => {
+    delete process.env['SENTINEL_TOTP_SECRET'];
+  });
 
   it('generates a 6-digit TOTP code', async () => {
     const result = await generateTotp({ secret: TEST_SECRET });
@@ -39,5 +43,25 @@ describe('generate_totp tool', () => {
     expect(response.timestamp).toBeDefined();
     // Should be a valid ISO date string
     expect(new Date(response.timestamp).toISOString()).toBe(response.timestamp);
+  });
+
+  it('uses the configured workflow secret when no secret is provided', async () => {
+    process.env['SENTINEL_TOTP_SECRET'] = TEST_SECRET;
+
+    const result = await generateTotp({});
+
+    expect(result.isError).toBe(false);
+    const response = JSON.parse(result.content[0]!.text);
+    expect(response.status).toBe('success');
+    expect(response.totpCode).toMatch(/^\d{6}$/);
+  });
+
+  it('returns an error when no secret is provided or configured', async () => {
+    const result = await generateTotp({});
+
+    expect(result.isError).toBe(true);
+    const response = JSON.parse(result.content[0]!.text);
+    expect(response.status).toBe('error');
+    expect(response.message).toContain('No TOTP secret configured');
   });
 });

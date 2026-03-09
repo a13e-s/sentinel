@@ -28,6 +28,7 @@ import { loadPrompt } from './prompt-manager.js';
 import { createModel } from '../ai/model-factory.js';
 import { runAgentLoop, type AgentLoopResult } from '../ai/agent-loop.js';
 import { createMcpTools, closeMcpClient } from '../tools/mcp-client.js';
+import { getAuthenticationRedactionRules, redactSensitiveText } from '../security/secret-redactor.js';
 import {
   createGitCheckpoint,
   commitGitSuccess,
@@ -162,7 +163,11 @@ export class AgentExecutionService {
     }
 
     // 6. Start audit logging
-    await auditSession.startAgent(agentName, prompt, attemptNumber);
+    const promptForAudit = redactSensitiveText(
+      prompt,
+      getAuthenticationRedactionRules(distributedConfig?.authentication),
+    );
+    await auditSession.startAgent(agentName, promptForAudit, attemptNumber);
 
     // 7. Create model and MCP tools
     const model = await createModel(modelConfig);
@@ -170,7 +175,12 @@ export class AgentExecutionService {
     let loopResult: AgentLoopResult;
 
     try {
-      const { client, tools } = await createMcpTools(repoPath);
+      const { client, tools } = await createMcpTools(
+        repoPath,
+        distributedConfig?.authentication?.credentials.totp_secret
+          ? { totpSecret: distributedConfig.authentication.credentials.totp_secret }
+          : undefined,
+      );
       mcpClient = client;
 
       // 8. Execute agent loop

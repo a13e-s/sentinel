@@ -19,14 +19,15 @@ export const GenerateTotpInputSchema = z.object({
     .string()
     .min(1)
     .regex(/^[A-Z2-7]+$/i, 'Must be base32-encoded')
-    .describe('Base32-encoded TOTP secret'),
+    .optional()
+    .describe('Optional base32-encoded TOTP secret. If omitted, use the preconfigured workflow secret.'),
 });
 
 export type GenerateTotpInput = z.infer<typeof GenerateTotpInputSchema>;
 
 /** Tool description for MCP registration. */
 export const GENERATE_TOTP_DESCRIPTION =
-  'Generates 6-digit TOTP code for authentication. Secret must be base32-encoded.';
+  'Generates 6-digit TOTP code for authentication. Use the preconfigured workflow secret by default, or provide a base32-encoded secret explicitly.';
 
 /**
  * Generate HOTP code (RFC 4226)
@@ -74,7 +75,15 @@ function getSecondsUntilExpiration(timeStep: number = 30): number {
 /** generate_totp tool implementation. */
 export async function generateTotp(args: GenerateTotpInput): Promise<ToolResult> {
   try {
-    const { secret } = args;
+    const secret = args.secret ?? process.env['SENTINEL_TOTP_SECRET'];
+
+    if (!secret) {
+      const errorResponse = createCryptoError(
+        'No TOTP secret configured. Provide "secret" explicitly or set a workflow secret.',
+        false,
+      );
+      return createToolResult(errorResponse);
+    }
 
     // Validate secret (throws on error)
     validateTotpSecret(secret);

@@ -73,4 +73,23 @@ describe('MCP client integration', () => {
       await closeMcpClient(client);
     }
   });
+
+  it('passes workflow TOTP secret to the MCP server when configured', async () => {
+    const { client, tools } = await createMcpTools(targetDir, {
+      totpSecret: 'JBSWY3DPEHPK3PXP',
+    });
+
+    try {
+      const totpTool = tools.find((t) => t.name === 'generate_totp');
+      expect(totpTool).toBeDefined();
+
+      const result = await totpTool!.invoke({});
+
+      const parsed = JSON.parse(result as string);
+      expect(parsed.status).toBe('success');
+      expect(parsed.totpCode).toMatch(/^\d{6}$/);
+    } finally {
+      await closeMcpClient(client);
+    }
+  });
 });
