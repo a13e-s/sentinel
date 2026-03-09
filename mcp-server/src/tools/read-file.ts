@@ -7,9 +7,9 @@
 
 import { z } from 'zod';
 import fs from 'node:fs';
-import path from 'node:path';
 import { createToolResult, type ToolResult } from '../types/tool-responses.js';
 import { createValidationError, createGenericError } from '../utils/error-formatter.js';
+import { resolveExistingRepoPath } from '../utils/path-security.js';
 
 export const ReadFileInputSchema = z.object({
   file_path: z.string().describe('Path to the file to read, relative to the repository root'),
@@ -28,33 +28,7 @@ export const READ_FILE_DESCRIPTION =
 export function createReadFileHandler(targetDir: string) {
   return async function readFile(args: ReadFileInput): Promise<ToolResult> {
     try {
-      const resolvedPath = path.resolve(targetDir, args.file_path);
-
-      // Security: prevent path traversal outside targetDir
-      const resolvedBase = path.resolve(targetDir);
-      if (!resolvedPath.startsWith(resolvedBase + path.sep) && resolvedPath !== resolvedBase) {
-        return createToolResult(createValidationError(
-          `Path "${args.file_path}" resolves outside the repository`,
-          false,
-          { allowedBase: targetDir },
-        ));
-      }
-
-      if (!fs.existsSync(resolvedPath)) {
-        return createToolResult(createValidationError(
-          `File not found: ${args.file_path}`,
-          false,
-          { resolvedPath },
-        ));
-      }
-
-      const stat = fs.statSync(resolvedPath);
-      if (stat.isDirectory()) {
-        return createToolResult(createValidationError(
-          `"${args.file_path}" is a directory, not a file. Use list_directory instead.`,
-          false,
-        ));
-      }
+      const resolvedPath = resolveExistingRepoPath(targetDir, args.file_path, 'file');
 
       // Read with optional line slicing
       const content = fs.readFileSync(resolvedPath, 'utf-8');
@@ -77,6 +51,19 @@ export function createReadFileHandler(targetDir: string) {
         isError: false,
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes('outside the repository') ||
+        message.includes('symbolic link') ||
+        message.includes('not found') ||
+        message.includes('not a file')
+      ) {
+        return createToolResult(createValidationError(
+          message,
+          false,
+          { filePath: args.file_path, allowedBase: targetDir },
+        ));
+      }
       return createToolResult(createGenericError(error, false, { filePath: args.file_path }));
     }
   };

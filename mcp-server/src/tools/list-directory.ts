@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createToolResult, type ToolResult } from '../types/tool-responses.js';
 import { createValidationError, createGenericError } from '../utils/error-formatter.js';
+import { resolveExistingRepoPath } from '../utils/path-security.js';
 
 export const ListDirectoryInputSchema = z.object({
   directory_path: z.string().optional().describe('Directory path relative to repo root (default: root)'),
@@ -43,6 +44,10 @@ function listDir(dirPath: string, recursive: boolean, maxDepth: number, currentD
 
   for (const entry of dirEntries) {
     const relativeName = entry.name;
+
+    if (entry.isSymbolicLink()) {
+      continue;
+    }
 
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(relativeName)) continue;
@@ -83,25 +88,7 @@ function listDir(dirPath: string, recursive: boolean, maxDepth: number, currentD
 export function createListDirectoryHandler(targetDir: string) {
   return async function listDirectory(args: ListDirectoryInput): Promise<ToolResult> {
     try {
-      const dirPath = args.directory_path
-        ? path.resolve(targetDir, args.directory_path)
-        : targetDir;
-
-      // Security: prevent path traversal
-      const resolvedBase = path.resolve(targetDir);
-      if (!dirPath.startsWith(resolvedBase + path.sep) && dirPath !== resolvedBase) {
-        return createToolResult(createValidationError(
-          `Path "${args.directory_path}" resolves outside the repository`,
-          false,
-        ));
-      }
-
-      if (!fs.existsSync(dirPath)) {
-        return createToolResult(createValidationError(
-          `Directory not found: ${args.directory_path ?? '.'}`,
-          false,
-        ));
-      }
+      const dirPath = resolveExistingRepoPath(targetDir, args.directory_path, 'directory');
 
       const recursive = args.recursive ?? false;
       const maxDepth = args.max_depth ?? 3;
@@ -118,6 +105,19 @@ export function createListDirectoryHandler(targetDir: string) {
         isError: false,
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes('outside the repository') ||
+        message.includes('symbolic link') ||
+        message.includes('not found') ||
+        message.includes('not a directory')
+      ) {
+        return createToolResult(createValidationError(
+          message,
+          false,
+          { directoryPath: args.directory_path, allowedBase: targetDir },
+        ));
+      }
       return createToolResult(createGenericError(error, false, { directoryPath: args.directory_path }));
     }
   };
