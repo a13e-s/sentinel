@@ -69,6 +69,11 @@ const PHASE_SCHEMAS: ReadonlyMap<string, PhaseSchema> = new Map<string, PhaseSch
     maxLength: 1_000_000,
     expectedPatterns: [/#|summary|finding|recommendation|executive/i],
   }],
+  ['tool-output', {
+    description: 'Generic tool output returned to the agent loop',
+    maxLength: 1_000_000,
+    expectedPatterns: [/\S/],
+  }],
 ]);
 
 // === Injection Detection Patterns ===
