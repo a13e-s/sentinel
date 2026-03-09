@@ -105,6 +105,35 @@ describe('prompt-manager', () => {
       expect(result).not.toContain('{{LOGIN_INSTRUCTIONS}}');
     });
 
+    it('does not expose the TOTP seed in generated login instructions', async () => {
+      const config: DistributedConfig = {
+        avoid: [],
+        focus: [],
+        authentication: {
+          login_type: 'form',
+          login_url: 'https://example.com/login',
+          credentials: {
+            username: 'alice@example.com',
+            password: 'Sup3rSecret!',
+            totp_secret: 'JBSWY3DPEHPK3PXP',
+          },
+          login_flow: ['Type $username', 'Type $password', 'Enter $totp'],
+          success_condition: { type: 'url', value: '/dashboard' },
+        },
+      };
+
+      const result = await loadPrompt(
+        'recon',
+        { webUrl: 'https://example.com', repoPath: '/tmp/repo' },
+        config,
+        false,
+        logger,
+      );
+
+      expect(result).toContain('generate_totp MCP tool');
+      expect(result).not.toContain('JBSWY3DPEHPK3PXP');
+    });
+
     it('throws PentestError for non-existent prompt file', async () => {
       await expect(
         loadPrompt(

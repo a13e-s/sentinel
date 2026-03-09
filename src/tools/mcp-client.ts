@@ -16,6 +16,10 @@ const MCP_SERVER_ENTRY = path.resolve(
   '../../mcp-server/dist/index.js',
 );
 
+export interface McpToolOptions {
+  readonly totpSecret?: string;
+}
+
 /**
  * Create MCP client connected to the Sentinel helper server.
  *
@@ -27,6 +31,7 @@ const MCP_SERVER_ENTRY = path.resolve(
  */
 export async function createMcpTools(
   targetDir: string,
+  options?: McpToolOptions,
 ): Promise<{ client: MultiServerMCPClient; tools: StructuredToolInterface[] }> {
   const client = new MultiServerMCPClient({
     'sentinel-helper': {
@@ -35,6 +40,7 @@ export async function createMcpTools(
       args: [MCP_SERVER_ENTRY],
       env: {
         TARGET_DIR: targetDir,
+        ...(options?.totpSecret ? { SENTINEL_TOTP_SECRET: options.totpSecret } : {}),
       },
     },
   });
