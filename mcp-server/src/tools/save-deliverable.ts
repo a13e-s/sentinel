@@ -9,12 +9,12 @@
 
 import { z } from 'zod';
 import fs from 'node:fs';
-import path from 'node:path';
 import { DeliverableType, DELIVERABLE_FILENAMES, isQueueType } from '../types/deliverables.js';
 import { createToolResult, type ToolResult, type SaveDeliverableResponse } from '../types/tool-responses.js';
 import { validateQueueJson } from '../validation/queue-validator.js';
 import { saveDeliverableFile } from '../utils/file-operations.js';
 import { createValidationError, createGenericError } from '../utils/error-formatter.js';
+import { resolveExistingRepoPath } from '../utils/path-security.js';
 
 /**
  * Input schema for save_deliverable tool
@@ -30,16 +30,6 @@ export type SaveDeliverableInput = z.infer<typeof SaveDeliverableInputSchema>;
 /** Tool description for MCP registration. */
 export const SAVE_DELIVERABLE_DESCRIPTION =
   'Saves deliverable files with automatic validation. Queue files must have {"vulnerabilities": [...]} structure. For large reports, write the file to disk first then pass file_path instead of inline content to avoid output token limits.';
-
-/**
- * Check if a path is contained within a base directory.
- * Prevents path traversal attacks (e.g., ../../../etc/passwd).
- */
-function isPathContained(basePath: string, targetPath: string): boolean {
-  const resolvedBase = path.resolve(basePath);
-  const resolvedTarget = path.resolve(targetPath);
-  return resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + path.sep);
-}
 
 /**
  * Resolve deliverable content from either inline content or a file path.
@@ -61,26 +51,14 @@ function resolveContent(
     ));
   }
 
-  const resolvedPath = path.isAbsolute(args.file_path)
-    ? args.file_path
-    : path.resolve(targetDir, args.file_path);
-
-  // Security: Prevent path traversal outside targetDir
-  if (!isPathContained(targetDir, resolvedPath)) {
-    return createToolResult(createValidationError(
-      `Path "${args.file_path}" resolves outside allowed directory`,
-      false,
-      { deliverableType: args.deliverable_type, allowedBase: targetDir },
-    ));
-  }
-
   try {
+    const resolvedPath = resolveExistingRepoPath(targetDir, args.file_path, 'file');
     return fs.readFileSync(resolvedPath, 'utf-8');
   } catch (readError) {
     return createToolResult(createValidationError(
-      `Failed to read file at ${resolvedPath}: ${readError instanceof Error ? readError.message : String(readError)}`,
-      true,
-      { deliverableType: args.deliverable_type, filePath: resolvedPath },
+      readError instanceof Error ? readError.message : String(readError),
+      false,
+      { deliverableType: args.deliverable_type, filePath: args.file_path, allowedBase: targetDir },
     ));
   }
 }

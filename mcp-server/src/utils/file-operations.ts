@@ -6,7 +6,7 @@
  */
 
 import { writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { resolveRepoOutputPath } from './path-security.js';
 
 /**
  * Save deliverable file to deliverables/ directory
@@ -16,8 +16,7 @@ import { join } from 'path';
  * @param content - File content to save
  */
 export function saveDeliverableFile(targetDir: string, filename: string, content: string): string {
-  const deliverablesDir = join(targetDir, 'deliverables');
-  const filepath = join(deliverablesDir, filename);
+  const deliverablesDir = resolveRepoOutputPath(targetDir, 'deliverables');
 
   // Ensure deliverables directory exists
   try {
@@ -25,6 +24,8 @@ export function saveDeliverableFile(targetDir: string, filename: string, content
   } catch {
     throw new Error(`Cannot create deliverables directory at ${deliverablesDir}`);
   }
+
+  const filepath = resolveRepoOutputPath(targetDir, `deliverables/${filename}`);
 
   // Write file (atomic write - single operation)
   writeFileSync(filepath, content, 'utf8');

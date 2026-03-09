@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createToolResult, type ToolResult } from '../types/tool-responses.js';
 import { createValidationError, createGenericError } from '../utils/error-formatter.js';
+import { resolveExistingRepoPath } from '../utils/path-security.js';
 
 export const SearchFilesInputSchema = z.object({
   pattern: z.string().describe('Text or regex pattern to search for'),
@@ -57,6 +58,10 @@ function collectFiles(
   }
 
   for (const entry of dirEntries) {
+    if (entry.isSymbolicLink()) {
+      continue;
+    }
+
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name)) continue;
       files.push(...collectFiles(path.join(dirPath, entry.name), basePath, extensions, depth + 1));
@@ -77,25 +82,8 @@ function collectFiles(
 export function createSearchFilesHandler(targetDir: string) {
   return async function searchFiles(args: SearchFilesInput): Promise<ToolResult> {
     try {
-      const searchDir = args.directory_path
-        ? path.resolve(targetDir, args.directory_path)
-        : targetDir;
-
-      // Security: prevent path traversal
-      const resolvedBase = path.resolve(targetDir);
-      if (!searchDir.startsWith(resolvedBase + path.sep) && searchDir !== resolvedBase) {
-        return createToolResult(createValidationError(
-          `Path "${args.directory_path}" resolves outside the repository`,
-          false,
-        ));
-      }
-
-      if (!fs.existsSync(searchDir)) {
-        return createToolResult(createValidationError(
-          `Directory not found: ${args.directory_path ?? '.'}`,
-          false,
-        ));
-      }
+      const repoRoot = fs.realpathSync(targetDir);
+      const searchDir = resolveExistingRepoPath(targetDir, args.directory_path, 'directory');
 
       const maxResults = args.max_results ?? 50;
       const caseSensitive = args.case_sensitive ?? false;
@@ -131,7 +119,7 @@ export function createSearchFilesHandler(targetDir: string) {
           if (matches.length >= maxResults) break;
           if (regex.test(lines[i]!)) {
             matches.push({
-              file: path.relative(targetDir, filePath),
+              file: path.relative(repoRoot, filePath),
               line: i + 1,
               content: lines[i]!.trim().slice(0, 200),
             });
@@ -151,6 +139,19 @@ export function createSearchFilesHandler(targetDir: string) {
         isError: false,
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes('outside the repository') ||
+        message.includes('symbolic link') ||
+        message.includes('not found') ||
+        message.includes('not a directory')
+      ) {
+        return createToolResult(createValidationError(
+          message,
+          false,
+          { directoryPath: args.directory_path, allowedBase: targetDir },
+        ));
+      }
       return createToolResult(createGenericError(error, false, { pattern: args.pattern }));
     }
   };

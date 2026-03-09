@@ -110,9 +110,22 @@ export async function copyDeliverablesToAudit(
 ): Promise<void> {
   const sourceDir = path.join(repoPath, 'deliverables');
   const destDir = path.join(generateAuditPath(sessionMetadata), 'deliverables');
+  const realRepoPath = await fs.realpath(repoPath).catch(() => null);
 
   let entries: string[];
   try {
+    const sourceDirStat = await fs.lstat(sourceDir);
+    if (sourceDirStat.isSymbolicLink()) {
+      return;
+    }
+
+    const realSourceDir = await fs.realpath(sourceDir);
+    if (realRepoPath !== null && !(
+      realSourceDir === realRepoPath || realSourceDir.startsWith(realRepoPath + path.sep)
+    )) {
+      return;
+    }
+
     entries = await fs.readdir(sourceDir);
   } catch {
     // Source directory doesn't exist yet -- nothing to copy
@@ -125,8 +138,13 @@ export async function copyDeliverablesToAudit(
     const sourcePath = path.join(sourceDir, entry);
     const destPath = path.join(destDir, entry);
 
+    // Reject symlinked deliverables by default for untrusted target repos.
+    const stat = await fs.lstat(sourcePath);
+    if (stat.isSymbolicLink()) {
+      continue;
+    }
+
     // Only copy files, skip subdirectories
-    const stat = await fs.stat(sourcePath);
     if (stat.isFile()) {
       await fs.copyFile(sourcePath, destPath);
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync, symlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createSaveDeliverableHandler } from '../../../mcp-server/src/tools/save-deliverable.js';
@@ -83,7 +83,7 @@ describe('save_deliverable tool', () => {
 
     expect(result.isError).toBe(true);
     const response = JSON.parse(result.content[0]!.text);
-    expect(response.message).toContain('resolves outside allowed directory');
+    expect(response.message).toContain('outside the repository');
   });
 
   it('errors when neither content nor file_path provided', async () => {
@@ -95,5 +95,22 @@ describe('save_deliverable tool', () => {
     expect(result.isError).toBe(true);
     const response = JSON.parse(result.content[0]!.text);
     expect(response.message).toContain('Either "content" or "file_path" must be provided');
+  });
+
+  it('rejects symlinked source files even when they resolve inside the repository', async () => {
+    const realPath = join(targetDir, 'real-report.md');
+    const symlinkPath = join(targetDir, 'linked-report.md');
+    writeFileSync(realPath, '# Report from file');
+    symlinkSync(realPath, symlinkPath);
+
+    const handler = createSaveDeliverableHandler(targetDir);
+    const result = await handler({
+      deliverable_type: DeliverableType.RECON,
+      file_path: symlinkPath,
+    });
+
+    expect(result.isError).toBe(true);
+    const response = JSON.parse(result.content[0]!.text);
+    expect(response.message).toContain('symbolic link');
   });
 });
