@@ -177,9 +177,12 @@ export class AgentExecutionService {
     try {
       const { client, tools } = await createMcpTools(
         repoPath,
-        distributedConfig?.authentication?.credentials.totp_secret
-          ? { totpSecret: distributedConfig.authentication.credentials.totp_secret }
-          : undefined,
+        {
+          targetWebUrl: webUrl,
+          ...(distributedConfig?.authentication?.credentials.totp_secret
+            ? { totpSecret: distributedConfig.authentication.credentials.totp_secret }
+            : {}),
+        },
       );
       mcpClient = client;
 

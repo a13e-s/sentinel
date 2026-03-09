@@ -6,7 +6,7 @@
  *
  * Communicates via stdio transport, connected by LangChain MCP adapters.
  *
- * Usage: TARGET_DIR=/path/to/repo node dist/index.js
+ * Usage: TARGET_DIR=/path/to/repo SENTINEL_TARGET_URL=https://target.example node dist/index.js
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -99,7 +99,12 @@ export function createSentinelHelperServer(targetDir: string): McpServer {
   );
 
   // 4. Register execute_command tool
-  const executeCommandHandler = createExecuteCommandHandler(targetDir);
+  const executeCommandHandler = createExecuteCommandHandler(targetDir, {
+    ...(process.env['SENTINEL_TARGET_URL'] != null
+      ? { targetWebUrl: process.env['SENTINEL_TARGET_URL'] }
+      : {}),
+    unsafeShellMode: process.env['SENTINEL_UNSAFE_SHELL_MODE'] === 'true',
+  });
   server.registerTool(
     'execute_command',
     {

@@ -18,6 +18,7 @@ const MCP_SERVER_ENTRY = path.resolve(
 
 export interface McpToolOptions {
   readonly totpSecret?: string;
+  readonly targetWebUrl?: string;
 }
 
 /**
@@ -41,6 +42,10 @@ export async function createMcpTools(
       env: {
         TARGET_DIR: targetDir,
         ...(options?.totpSecret ? { SENTINEL_TOTP_SECRET: options.totpSecret } : {}),
+        ...(options?.targetWebUrl ? { SENTINEL_TARGET_URL: options.targetWebUrl } : {}),
+        ...(process.env['SENTINEL_UNSAFE_SHELL_MODE'] != null
+          ? { SENTINEL_UNSAFE_SHELL_MODE: process.env['SENTINEL_UNSAFE_SHELL_MODE'] }
+          : {}),
       },
     },
   });

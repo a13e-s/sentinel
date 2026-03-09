@@ -176,7 +176,9 @@ describe('AgentExecutionService', () => {
     expect(mockCreateGitCheckpoint).toHaveBeenCalled();
     expect(auditSession.startAgent).toHaveBeenCalledWith('pre-recon', expect.any(String), 1);
     expect(mockCreateModel).toHaveBeenCalled();
-    expect(mockCreateMcpTools).toHaveBeenCalledWith('/tmp/test-repo', undefined);
+    expect(mockCreateMcpTools).toHaveBeenCalledWith('/tmp/test-repo', {
+      targetWebUrl: 'https://example.com',
+    });
     expect(mockRunAgentLoop).toHaveBeenCalled();
     expect(mockPathExists).toHaveBeenCalled(); // Deliverable check
     expect(mockCommitGitSuccess).toHaveBeenCalled();
@@ -353,6 +355,7 @@ describe('AgentExecutionService', () => {
       expect.any(Object),
     );
     expect(mockCreateMcpTools).toHaveBeenCalledWith('/tmp/test-repo', {
+      targetWebUrl: 'https://example.com',
       totpSecret: 'JBSWY3DPEHPK3PXP',
     });
   });

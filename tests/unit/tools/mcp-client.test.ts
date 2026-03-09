@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdirSync, rmSync } from 'fs';
+import { mkdirSync, rmSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { execFileSync } from 'child_process';
@@ -18,7 +18,9 @@ describe('MCP client integration', () => {
   });
 
   afterAll(() => {
-    rmSync(targetDir, { recursive: true, force: true });
+    if (targetDir) {
+      rmSync(targetDir, { recursive: true, force: true });
+    }
   });
 
   it('connects to MCP server and returns tools', async () => {
@@ -28,6 +30,7 @@ describe('MCP client integration', () => {
       expect(tools.length).toBeGreaterThanOrEqual(2);
 
       const toolNames = tools.map((t) => t.name);
+      expect(toolNames).toContain('execute_command');
       expect(toolNames).toContain('save_deliverable');
       expect(toolNames).toContain('generate_totp');
     } finally {
@@ -69,6 +72,25 @@ describe('MCP client integration', () => {
       const parsed = JSON.parse(result as string);
       expect(parsed.status).toBe('success');
       expect(parsed.totpCode).toMatch(/^\d{6}$/);
+    } finally {
+      await closeMcpClient(client);
+    }
+  });
+
+  it('execute_command works through MCP client for allowlisted commands', async () => {
+    const { client, tools } = await createMcpTools(targetDir);
+
+    try {
+      const commandTool = tools.find((t) => t.name === 'execute_command');
+      expect(commandTool).toBeDefined();
+
+      const result = await commandTool!.invoke({
+        command: 'pwd',
+      });
+
+      const parsed = JSON.parse(result as string);
+      expect(parsed.status).toBe('success');
+      expect(parsed.stdout.trim()).toBe(realpathSync(targetDir));
     } finally {
       await closeMcpClient(client);
     }
